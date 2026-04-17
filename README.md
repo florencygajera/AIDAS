@@ -55,13 +55,13 @@ uvicorn app.main:app --reload
 Run the bundled training entrypoint:
 
 ```powershell
-python train.py --data dataset/data.yaml --model yolov8m.pt --epochs 100 --batch 16 --imgsz 640
+python train.py --data dataset/data.yaml --model yolov8n.pt --epochs 30 --batch 16 --imgsz 512
 ```
 
 Example with a larger model and GPU device:
 
 ```powershell
-python train.py --data dataset/data.yaml --model yolov8l.pt --epochs 150 --batch 8 --imgsz 640 --device 0
+python train.py --data dataset/data.yaml --model yolov8m.pt --epochs 100 --batch 16 --imgsz 640 --device 0
 ```
 
 The training script writes runs under `runs/detect/` by default. The best checkpoint is usually:
@@ -121,7 +121,7 @@ python scripts/classification_to_yolo_pipeline.py --refine --skip-train
 To run the same training command manually after conversion:
 
 ```powershell
-yolo detect train data=dataset/data.yaml model=yolov8m.pt epochs=100 imgsz=640 batch=16 optimizer=AdamW lr0=0.001
+yolo detect train data=dataset/data.yaml model=yolov8n.pt epochs=30 imgsz=512 batch=16 optimizer=AdamW lr0=0.001
 ```
 
 ## Training configuration

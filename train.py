@@ -21,25 +21,26 @@ def load_yaml(path: Path) -> Dict[str, Any]:
 
 
 def build_train_kwargs(config: Dict[str, Any], args: argparse.Namespace) -> Dict[str, Any]:
+    fast_mode = bool(args.fast or config.get("fast", False))
     train_cfg = {
-        "model": args.model or config.get("model", "yolov8m.pt"),
+        "model": args.model or ("yolov8n.pt" if fast_mode else config.get("model", "yolov8m.pt")),
         "data": args.data or config.get("data", "configs/data.yaml"),
-        "epochs": args.epochs or config.get("epochs", 100),
-        "imgsz": args.imgsz or config.get("imgsz", 640),
-        "batch": args.batch or config.get("batch", 16),
+        "epochs": args.epochs or (30 if fast_mode else config.get("epochs", 100)),
+        "imgsz": args.imgsz or (512 if fast_mode else config.get("imgsz", 640)),
+        "batch": args.batch or (16 if fast_mode else config.get("batch", 16)),
         "optimizer": args.optimizer or config.get("optimizer", "AdamW"),
         "lr0": args.lr0 or config.get("lr0", 0.001),
         "cos_lr": True if args.cos_lr else bool(config.get("cos_lr", True)),
-        "mosaic": config.get("mosaic", 1.0),
-        "mixup": config.get("mixup", 0.15),
+        "mosaic": 0.5 if fast_mode else config.get("mosaic", 1.0),
+        "mixup": 0.0 if fast_mode else config.get("mixup", 0.15),
         "label_smoothing": config.get("label_smoothing", 0.0),
-        "hsv_h": config.get("hsv_h", 0.015),
-        "hsv_s": config.get("hsv_s", 0.7),
-        "hsv_v": config.get("hsv_v", 0.4),
-        "degrees": config.get("degrees", 10.0),
-        "translate": config.get("translate", 0.1),
-        "scale": config.get("scale", 0.5),
-        "shear": config.get("shear", 2.0),
+        "hsv_h": 0.01 if fast_mode else config.get("hsv_h", 0.015),
+        "hsv_s": 0.5 if fast_mode else config.get("hsv_s", 0.7),
+        "hsv_v": 0.3 if fast_mode else config.get("hsv_v", 0.4),
+        "degrees": 0.0 if fast_mode else config.get("degrees", 10.0),
+        "translate": 0.05 if fast_mode else config.get("translate", 0.1),
+        "scale": 0.3 if fast_mode else config.get("scale", 0.5),
+        "shear": 0.0 if fast_mode else config.get("shear", 2.0),
         "fliplr": config.get("fliplr", 0.5),
         "save": True,
         "project": args.project,
@@ -79,6 +80,11 @@ def main() -> None:
     parser.add_argument("--cos-lr", action="store_true", help="Enable cosine LR scheduler.")
     parser.add_argument("--patience", type=int, default=None, help="Early stopping patience.")
     parser.add_argument("--device", type=str, default=None, help="Device like cpu, 0, 0,1.")
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="Use a faster, lighter training preset: yolov8n, fewer epochs, smaller images, and weaker augmentation.",
+    )
     parser.add_argument("--pretrained", action="store_true", default=None, help="Use pretrained weights.")
     parser.add_argument("--no-pretrained", action="store_false", dest="pretrained", help="Disable pretrained weights.")
     parser.add_argument("--project", type=str, default="runs/detect", help="Ultralytics project directory.")
@@ -93,4 +99,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

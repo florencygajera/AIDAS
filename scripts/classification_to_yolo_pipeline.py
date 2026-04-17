@@ -303,7 +303,12 @@ def build_train_config(
     device: Optional[str],
     patience: Optional[int],
     pretrained: Optional[bool],
+    fast: bool,
 ) -> Dict[str, Any]:
+    if fast:
+        model = "yolov8n.pt"
+        epochs = min(epochs, 30)
+        imgsz = min(imgsz, 512)
     train_cfg: Dict[str, Any] = {
         "model": model,
         "data": str(data_yaml),
@@ -312,6 +317,12 @@ def build_train_config(
         "batch": batch,
         "optimizer": optimizer,
         "lr0": lr0,
+        "mosaic": 0.5 if fast else 1.0,
+        "mixup": 0.0 if fast else 0.15,
+        "degrees": 0.0 if fast else 10.0,
+        "translate": 0.05 if fast else 0.1,
+        "scale": 0.3 if fast else 0.5,
+        "shear": 0.0 if fast else 2.0,
         "save": True,
         "project": project,
         "name": name,
@@ -370,12 +381,17 @@ def main() -> None:
     )
     parser.add_argument("--device", type=str, default=None, help="Device for refinement and training, e.g. cpu or 0.")
     parser.add_argument("--skip-train", action="store_true", help="Prepare the dataset but do not start training.")
-    parser.add_argument("--train-model", type=str, default="yolov8m.pt", help="Base model for detection training.")
-    parser.add_argument("--epochs", type=int, default=100, help="Training epochs.")
-    parser.add_argument("--imgsz", type=int, default=640, help="Training image size.")
+    parser.add_argument("--train-model", type=str, default="yolov8n.pt", help="Base model for detection training.")
+    parser.add_argument("--epochs", type=int, default=30, help="Training epochs.")
+    parser.add_argument("--imgsz", type=int, default=512, help="Training image size.")
     parser.add_argument("--batch", type=int, default=16, help="Training batch size.")
     parser.add_argument("--optimizer", type=str, default="AdamW", help="Training optimizer.")
     parser.add_argument("--lr0", type=float, default=0.001, help="Initial learning rate.")
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="Use a faster training preset (yolov8n, <=30 epochs, smaller images, lighter augmentation).",
+    )
     parser.add_argument("--project", type=str, default="runs/detect", help="Ultralytics project directory.")
     parser.add_argument("--name", type=str, default="defect_train", help="Training run name.")
     parser.add_argument("--patience", type=int, default=None, help="Early stopping patience.")
@@ -419,6 +435,7 @@ def main() -> None:
         device=args.device,
         patience=args.patience,
         pretrained=args.pretrained,
+        fast=args.fast,
     )
     result = run_training(train_kwargs)
     print(result)
