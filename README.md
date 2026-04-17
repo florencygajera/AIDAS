@@ -50,6 +50,28 @@ uvicorn app.main:app --reload
 
 4. Open `http://127.0.0.1:8000`
 
+## Training
+
+Run the bundled training entrypoint:
+
+```powershell
+python train.py --data configs/data.yaml --model yolov8m.pt --epochs 100 --batch 16 --imgsz 640
+```
+
+Example with a larger model and GPU device:
+
+```powershell
+python train.py --data configs/data.yaml --model yolov8l.pt --epochs 150 --batch 8 --imgsz 640 --device 0
+```
+
+The training script writes runs under `runs/detect/` by default. The best checkpoint is usually:
+
+```text
+runs/detect/defect_train/weights/best.pt
+```
+
+Copy that file to `models/yolov8m_defects.pt` or point `DEFECT_YOLO_WEIGHTS` to it for inference.
+
 ## Training configuration
 
 The code is wired for production inference, but the model quality depends on trained weights. Use a dataset with:
