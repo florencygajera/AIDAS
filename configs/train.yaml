@@ -1,26 +1,29 @@
-fast: true
-model: yolov8n.pt
+fast: false
+model: yolov8m.pt          # was yolov8n — too light for industrial defects
 data: dataset/data.yaml
-epochs: 30
-imgsz: 512
+epochs: 100                # was 30 — insufficient for convergence
+imgsz: 640                 # was 512 — larger size captures micro-defects
 batch: 16
 optimizer: AdamW
 lr0: 0.001
+cos_lr: true               # add cosine LR decay
+warmup_epochs: 3           # add warmup
+patience: 20               # early stopping
 augment: true
-hsv_h: 0.01
-hsv_s: 0.5
-hsv_v: 0.3
-degrees: 0.0
-translate: 0.05
-scale: 0.3
-shear: 0.0
-perspective: 0.0
-flipud: 0.0
+hsv_h: 0.015
+hsv_s: 0.7                 # was 0.5 — more saturation variation
+hsv_v: 0.4                 # was 0.3
+degrees: 5.0               # add small rotation
+translate: 0.1             # was 0.05
+scale: 0.5                 # was 0.3
+shear: 1.0                 # light shear
+perspective: 0.0005        # slight perspective
+flipud: 0.1                # was 0 — vertical flips help for ceiling/floor cracks
 fliplr: 0.5
-blur: 0.15
-mosaic: 0.5
-mixup: 0.0
-copy_paste: 0.1
+blur: 0.2                  # slightly higher for blur robustness
+mosaic: 0.8                # was 0.5
+mixup: 0.1                 # was 0.0 — small mixup improves generalization
+copy_paste: 0.15           # was 0.1
 conf: 0.25
 iou: 0.5
-
+label_smoothing: 0.05      # add label smoothing for noisy industrial labels

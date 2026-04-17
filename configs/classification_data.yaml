@@ -3,12 +3,11 @@ train: train
 val: val
 
 names:
-  0: corrosion
-  1: crack
+  0: crack
+  1: hole
   2: dent
-  3: hole
-  4: leak
+  3: rust
+  4: corrosion
   5: paint_damage
-  6: rust
-  7: scratch
-
+  6: scratch
+  7: leak
