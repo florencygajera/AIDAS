@@ -7,6 +7,7 @@ import numpy as np
 
 from app.config import CRITICAL_CLASSES, SEVERITY_WEIGHTS
 from app.services.detection import Detection
+from app.services.validation import load_critical_zone, location_factor
 
 
 def severity_from_label(label: str) -> str:
@@ -30,15 +31,18 @@ def risk_score_for_detections(
     consistency_counts: Optional[Dict[Tuple[str, Tuple[int, int, int, int]], int]] = None,
 ) -> float:
     score = 0.0
+    critical_zone = load_critical_zone()
     for det in detections:
         weight = SEVERITY_WEIGHTS.get(det.label, 1.0)
         consistency = 1.0
         if consistency_counts is not None:
             consistency = min(1.0, consistency_counts.get((det.label, det.bbox), 1) / 3.0)
             consistency = max(consistency, 0.33)
+        source_bonus = min(1.0 + (len(set(det.source_tags)) - 1) * 0.1, 1.3) if det.source_tags else 1.0
         area = _area_ratio(det.bbox, image_size)
         confidence = max(det.effective_confidence, 0.0)
-        score += weight * area * confidence * consistency
+        loc = location_factor(det.bbox, image_size, critical_zone)
+        score += weight * area * confidence * consistency * loc * source_bonus
     return float(round(score, 6))
 
 
@@ -50,4 +54,3 @@ def audit_decision(detections: Sequence[Detection], risk_score: float) -> str:
     if 0.3 <= risk_score <= 1.0:
         return "REVIEW"
     return "READY"
-

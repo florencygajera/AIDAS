@@ -27,6 +27,7 @@ class Detection:
     confidence: float
     bbox: Tuple[int, int, int, int]
     source: str = "primary"
+    source_tags: Tuple[str, ...] = ()
     mask_area: Optional[float] = None
     frame_index: Optional[int] = None
     timestamp: Optional[float] = None
@@ -112,6 +113,7 @@ class YoloDetector:
                     confidence=confidence,
                     bbox=_clamp_box((x1, y1, x2, y2)),
                     source=source,
+                    source_tags=(source,),
                 )
             )
         masks = getattr(result, "masks", None)
@@ -165,6 +167,14 @@ def run_patch_detection(detector: YoloDetector, image_rgb: np.ndarray) -> List[D
     return detections
 
 
+def run_multiscale_detection(detector: YoloDetector, image_rgb: np.ndarray) -> List[Detection]:
+    full_scale = detector.predict(image_rgb, source="full_640")
+    downscaled = cv2.resize(image_rgb, (320, 320), interpolation=cv2.INTER_AREA)
+    down_scale_detections = detector.predict(downscaled, source="downscale_320")
+    merged = full_scale + down_scale_detections + run_patch_detection(detector, image_rgb)
+    return merged
+
+
 def weighted_box_fusion(detections: Sequence[Detection], iou_threshold: float = 0.5) -> List[Detection]:
     grouped: Dict[str, List[Detection]] = {}
     for det in detections:
@@ -192,17 +202,33 @@ def weighted_box_fusion(detections: Sequence[Detection], iou_threshold: float = 
             averaged = np.sum(coords * weights[:, None], axis=0) / np.sum(weights)
             confidence = float(max(det.effective_confidence for det in cluster))
             source_count = sum(det.source_count for det in cluster)
+            source_tags = tuple(sorted({tag for det in cluster for tag in det.source_tags} | {det.source for det in cluster}))
             fused.append(
                 Detection(
                     label=label,
                     confidence=confidence,
                     bbox=_clamp_box(tuple(averaged.tolist())),
                     source="fused",
+                    source_tags=source_tags,
                     mask_area=max((det.mask_area or 0.0) for det in cluster) or None,
                     source_count=source_count,
                 )
             )
     return sorted(fused, key=lambda d: d.effective_confidence, reverse=True)
+
+
+def non_max_suppression(detections: Sequence[Detection], iou_threshold: float = 0.45) -> List[Detection]:
+    ordered = sorted(detections, key=lambda d: d.effective_confidence, reverse=True)
+    kept: List[Detection] = []
+    for det in ordered:
+        keep = True
+        for existing in kept:
+            if det.label == existing.label and _iou(det.bbox, existing.bbox) >= iou_threshold:
+                keep = False
+                break
+        if keep:
+            kept.append(det)
+    return kept
 
 
 def remap_to_original(preprocessed: PreprocessedImage, det: Detection) -> Detection:
@@ -225,4 +251,3 @@ def remap_to_original(preprocessed: PreprocessedImage, det: Detection) -> Detect
         oy2 = min(h - 1, oy1 + 1)
     det.bbox = (ox1, oy1, ox2, oy2)
     return det
-
