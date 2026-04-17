@@ -34,6 +34,10 @@ class DefectRefiner:
         if not self.weights:
             self._available = False
             return None
+        weights_path = Path(self.weights)
+        if not weights_path.exists():
+            self._available = False
+            return None
         try:
             import torch
             from torchvision import models
@@ -42,7 +46,7 @@ class DefectRefiner:
             return None
         model = models.efficientnet_b0(weights=None)
         model.classifier[1] = torch.nn.Linear(model.classifier[1].in_features, len(CLASS_NAMES))
-        state = torch.load(self.weights, map_location="cpu")
+        state = torch.load(weights_path, map_location="cpu")
         if isinstance(state, dict) and "state_dict" in state:
             state = state["state_dict"]
         elif isinstance(state, dict) and "model" in state and isinstance(state["model"], dict):
