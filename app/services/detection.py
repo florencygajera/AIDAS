@@ -82,13 +82,18 @@ class YoloDetector:
     def _ensure_model(self):
         if self._model is not None:
             return self._model
+        weights_path = Path(self.weights)
+        if not weights_path.exists():
+            raise RuntimeError(
+                f"YOLO weights not found at {weights_path}. Place trained weights there or set DEFECT_YOLO_WEIGHTS."
+            )
         try:
             from ultralytics import YOLO
         except Exception as exc:  # pragma: no cover - dependency guard
             raise RuntimeError(
                 "ultralytics is required for detection inference. Install project dependencies first."
             ) from exc
-        self._model = YOLO(self.weights)
+        self._model = YOLO(str(weights_path))
         return self._model
 
     def predict(self, image_rgb: np.ndarray, source: str = "primary") -> List[Detection]:
@@ -135,7 +140,7 @@ class OptionalSegmenter(YoloDetector):
 
     @property
     def available(self) -> bool:
-        return bool(self.weights)
+        return bool(self.weights) and Path(self.weights).exists()
 
 
 def denormalize_patch_box(

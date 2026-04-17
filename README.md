@@ -85,4 +85,6 @@ Suggested training settings:
 - Patch scanning is built in and always active.
 - Classification refinement is optional and becomes active when classifier weights are provided.
 - For safety-critical deployments, validate thresholds and retrain on your real factory data before production use.
-
+- Use `scripts/build_balanced_manifest.py` to rebalance datasets and oversample rare classes.
+- Use `scripts/evaluate_predictions.py` to track precision, recall, and false negatives for crack, hole, and leak.
+- Use `scripts/mining_failures.py` to collect missed defects and hard negatives for the next retraining loop.

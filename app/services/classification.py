@@ -96,9 +96,11 @@ class DefectRefiner:
         if result is None:
             detection.refined_confidence = detection.confidence
             return detection
-        if result.score >= self.threshold:
-            detection.label = result.label
+        if result.score >= self.threshold and result.label == detection.label:
             detection.refined_confidence = max(detection.confidence, result.score)
+            detection.source_tags = tuple(sorted(set(detection.source_tags) | {"classifier"}))
+        elif result.score >= self.threshold and result.label != detection.label:
+            detection.refined_confidence = min(detection.confidence, result.score * 0.75)
         else:
             detection.refined_confidence = min(detection.confidence, result.score)
         return detection

@@ -9,19 +9,27 @@ import cv2
 import numpy as np
 
 from app.config import (
+    CRITICAL_CLASSES,
+    FINAL_VALIDATION_CONFIDENCE,
     IMAGE_SIZE,
+    NMS_IOU,
     MERGE_CONFIDENCE,
     OUTPUT_DIR,
+    SECONDARY_CONFIRMATION_CONFIDENCE,
+    TEMPORAL_MIN_CONSEC_FRAMES,
     VIDEO_MIN_FRAMES,
     VIDEO_SAMPLE_INTERVAL_SECONDS,
 )
 from app.schemas import AuditResponse, DefectBox
+from app.services.calibration import ConfidenceCalibrator
 from app.services.classification import DefectRefiner
 from app.services.detection import (
     Detection,
     OptionalSegmenter,
     YoloDetector,
+    non_max_suppression,
     remap_to_original,
+    run_multiscale_detection,
     run_patch_detection,
     weighted_box_fusion,
 )
@@ -34,6 +42,8 @@ from app.services.preprocess import (
     read_image_rgb,
     save_rgb_image,
 )
+from app.services.temporal import TemporalConsistencyTracker
+from app.services.validation import validate_detection
 from app.services.scoring import audit_decision, risk_score_for_detections, severity_from_label
 
 
@@ -130,21 +140,38 @@ class DefectPipeline:
         detector: Optional[YoloDetector] = None,
         segmenter: Optional[OptionalSegmenter] = None,
         refiner: Optional[DefectRefiner] = None,
+        calibrator: Optional[ConfidenceCalibrator] = None,
     ):
         self.detector = detector or YoloDetector()
         self.segmenter = segmenter or OptionalSegmenter()
         self.refiner = refiner or DefectRefiner()
+        self.calibrator = calibrator or ConfidenceCalibrator()
 
     def _detect_single_image(self, image_rgb: np.ndarray) -> Tuple[List[Detection], Dict[Tuple[str, Tuple[int, int, int, int]], int]]:
-        primary = self.detector.predict(image_rgb, source="primary")
-        patches = run_patch_detection(self.detector, image_rgb)
-        segment = self.segmenter.predict(image_rgb, source="segment") if self.segmenter and self.segmenter.available else []
-        detections = weighted_box_fusion(primary + patches + segment, iou_threshold=0.5)
-        detections = [det for det in detections if det.effective_confidence >= MERGE_CONFIDENCE]
-        detections = [self.refiner.refine_detection(image_rgb, det) for det in detections]
-        detections = [det for det in detections if det.effective_confidence >= MERGE_CONFIDENCE]
-        consistency = {(det.label, det.bbox): 1 for det in detections}
-        return detections, consistency
+        detections = run_multiscale_detection(self.detector, image_rgb)
+        if self.segmenter and self.segmenter.available:
+            detections.extend(self.segmenter.predict(image_rgb, source="segment"))
+        fused = weighted_box_fusion(detections, iou_threshold=NMS_IOU)
+        fused = non_max_suppression(fused, iou_threshold=NMS_IOU)
+        refined: List[Detection] = []
+        image_size = (image_rgb.shape[1], image_rgb.shape[0])
+        for det in fused:
+            det.refined_confidence = self.calibrator.calibrate_probability(det.confidence)
+            det = self.refiner.refine_detection(image_rgb, det)
+            validation = validate_detection(det, image_size, CRITICAL_CLASSES)
+            if not validation.accepted and det.label not in CRITICAL_CLASSES:
+                continue
+            det.source_count = max(det.source_count, len(set(det.source_tags)))
+            if det.label in CRITICAL_CLASSES:
+                if det.source_count >= 2 or det.effective_confidence >= SECONDARY_CONFIRMATION_CONFIDENCE:
+                    refined.append(det)
+                elif validation.accepted and det.effective_confidence >= FINAL_VALIDATION_CONFIDENCE:
+                    refined.append(det)
+            elif det.effective_confidence >= FINAL_VALIDATION_CONFIDENCE:
+                refined.append(det)
+        refined = non_max_suppression(refined, iou_threshold=NMS_IOU)
+        consistency = {(det.label, det.bbox): max(det.source_count, len(set(det.source_tags))) for det in refined}
+        return refined, consistency
 
     def process_image(self, input_path: Path) -> AuditResponse:
         image_rgb = read_image_rgb(input_path)
@@ -174,7 +201,9 @@ class DefectPipeline:
         frame_summaries: List[Tuple[int, np.ndarray, List[Detection]]] = []
         skipped_frames = 0
         frame_count = 0
+        sampled_index = 0
         first_frame_rgb: Optional[np.ndarray] = None
+        tracker = TemporalConsistencyTracker()
         for frame_idx, frame_rgb, timestamp in load_video_frames(input_path, VIDEO_SAMPLE_INTERVAL_SECONDS):
             frame_count += 1
             if first_frame_rgb is None:
@@ -190,6 +219,8 @@ class DefectPipeline:
                 det.timestamp = timestamp
             frame_summaries.append((frame_idx, frame_rgb, remapped))
             detections_all.extend(remapped)
+            tracker.update(remapped, sampled_index)
+            sampled_index += 1
         if not detections_all:
             fallback = first_frame_rgb if first_frame_rgb is not None else np.zeros((IMAGE_SIZE, IMAGE_SIZE, 3), dtype=np.uint8)
             out_path = OUTPUT_DIR / f"{input_path.stem}_annotated.jpg"
@@ -204,9 +235,17 @@ class DefectPipeline:
                 frame_count=frame_count,
                 skipped_frames=skipped_frames,
             )
-        merged, consistency_counts = _merge_video_detections(detections_all)
-        valid = [det for det in merged if det.source_count >= VIDEO_MIN_FRAMES]
-        refined = [self.refiner.refine_detection(first_frame_rgb if first_frame_rgb is not None else frame_summaries[0][1], det) for det in valid]
+        confirmed = tracker.confirmed_detections(min_consecutive_frames=TEMPORAL_MIN_CONSEC_FRAMES)
+        if not confirmed:
+            confirmed = []
+            for track in tracker.tracks:
+                if track.total_hits >= VIDEO_MIN_FRAMES:
+                    det = track.best_detection
+                    det.source_count = track.total_hits
+                    confirmed.append(det)
+        confirmed = non_max_suppression(weighted_box_fusion(confirmed, iou_threshold=NMS_IOU), iou_threshold=NMS_IOU)
+        refined = [self.refiner.refine_detection(first_frame_rgb if first_frame_rgb is not None else frame_summaries[0][1], det) for det in confirmed]
+        consistency_counts = {(det.label, det.bbox): max(det.source_count, len(set(det.source_tags))) for det in refined}
         risk = risk_score_for_detections(
             refined,
             (frame_summaries[0][1].shape[1], frame_summaries[0][1].shape[0]) if frame_summaries else (IMAGE_SIZE, IMAGE_SIZE),
