@@ -1,5 +1,5 @@
 model: yolov8m.pt
-data: configs/data.yaml
+data: dataset/data.yaml
 epochs: 100
 imgsz: 640
 batch: 16

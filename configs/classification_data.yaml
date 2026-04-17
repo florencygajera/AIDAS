@@ -1,6 +1,6 @@
-path: dataset
-train: images/train
-val: images/val
+path: dataset/classification/images
+train: train
+val: val
 
 names:
   0: corrosion

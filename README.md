@@ -55,13 +55,13 @@ uvicorn app.main:app --reload
 Run the bundled training entrypoint:
 
 ```powershell
-python train.py --data configs/data.yaml --model yolov8m.pt --epochs 100 --batch 16 --imgsz 640
+python train.py --data dataset/data.yaml --model yolov8m.pt --epochs 100 --batch 16 --imgsz 640
 ```
 
 Example with a larger model and GPU device:
 
 ```powershell
-python train.py --data configs/data.yaml --model yolov8l.pt --epochs 150 --batch 8 --imgsz 640 --device 0
+python train.py --data dataset/data.yaml --model yolov8l.pt --epochs 150 --batch 8 --imgsz 640 --device 0
 ```
 
 The training script writes runs under `runs/detect/` by default. The best checkpoint is usually:
@@ -71,6 +71,58 @@ runs/detect/defect_train/weights/best.pt
 ```
 
 Copy that file to `models/yolov8m_defects.pt` or point `DEFECT_YOLO_WEIGHTS` to it for inference.
+
+## Dataset Rearchitecture
+
+If your source images are organized like `dataset/images/val/raw/<class>/...`, you can create a clean
+80/20 train/val layout with renamed files using:
+
+```powershell
+python scripts/restructure_dataset.py --source-root dataset/images/val/raw --output-root dataset/classification --train-ratio 0.8
+```
+
+That produces:
+
+- `dataset/classification/images/train/<class>/<class>1.jpg`
+- `dataset/classification/images/val/<class>/<class>1.jpg`
+- `dataset/classification/manifest.json`
+
+For classification training, use:
+
+```powershell
+yolo classify train data=configs/classification_data.yaml model=yolov8m-cls.pt epochs=100 imgsz=224 batch=16
+```
+
+## Classification to YOLO Detection Pipeline
+
+To convert the classification-style defect dataset into YOLO detection format, auto-label it, optionally
+refine the boxes with a pretrained detector, and then train a detection model in one step, run:
+
+```powershell
+python scripts/classification_to_yolo_pipeline.py --refine
+```
+
+That script:
+
+- Reads `dataset/classification/images/train/<class>/...` and `dataset/classification/images/val/<class>/...`
+- Copies images into `dataset/images/train` and `dataset/images/val`
+- Creates matching labels in `dataset/labels/train` and `dataset/labels/val`
+- Writes `dataset/data.yaml`
+- Logs skipped or corrupted images in `dataset/conversion_manifest.json`
+- Starts YOLOv8 detection training with `yolov8m.pt`
+- Keeps the folder name as the defect class and uses YOLO refinement only for box localization
+
+If you want dataset preparation without training, add:
+
+```powershell
+python scripts/classification_to_yolo_pipeline.py --refine --skip-train
+```
+
+To run the same training command manually after conversion:
+
+```powershell
+yolo detect train data=dataset/data.yaml model=yolov8m.pt epochs=100 imgsz=640 batch=16 optimizer=AdamW lr0=0.001
+```
 
 ## Training configuration
 
