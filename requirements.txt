@@ -1,0 +1,12 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+jinja2>=3.1
+python-multipart>=0.0.9
+opencv-python>=4.10
+numpy>=1.26
+pydantic>=2.7
+Pillow>=10.4
+torch>=2.3
+torchvision>=0.18
+ultralytics>=8.3
+

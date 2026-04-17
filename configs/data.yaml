@@ -1,0 +1,15 @@
+path: ../data
+train: images/train
+val: images/val
+test: images/test
+
+names:
+  0: crack
+  1: hole
+  2: dent
+  3: rust
+  4: corrosion
+  5: paint_damage
+  6: scratch
+  7: leak
+

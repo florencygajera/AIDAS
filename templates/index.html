@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Industrial Defect Detection</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Production-grade visual inspection</p>
+          <h1>Defect detection for industrial surfaces</h1>
+          <p class="lede">
+            Upload an image or video. The system preprocesses the input, scans primary and micro-defects,
+            refines classifications, scores risk, and returns an audit decision.
+          </p>
+        </div>
+        <div class="card upload-card">
+          <form id="upload-form">
+            <label for="file">Image or video</label>
+            <input id="file" name="file" type="file" accept=".jpg,.jpeg,.png,.bmp,.mp4,.avi,.mov" required />
+            <button type="submit">Run inspection</button>
+          </form>
+          <p class="hint">Supported: JPG, PNG, JPEG, BMP, MP4, AVI, MOV</p>
+        </div>
+      </section>
+
+      <section class="grid">
+        <article class="card result-card">
+          <h2>Result</h2>
+          <pre id="result">Waiting for upload...</pre>
+        </article>
+        <article class="card preview-card">
+          <h2>Annotated output</h2>
+          <div id="preview"></div>
+        </article>
+      </section>
+    </main>
+
+    <script>
+      const form = document.getElementById("upload-form");
+      const result = document.getElementById("result");
+      const preview = document.getElementById("preview");
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const fileInput = document.getElementById("file");
+        const fd = new FormData();
+        fd.append("file", fileInput.files[0]);
+        result.textContent = "Running inspection...";
+        preview.innerHTML = "";
+
+        try {
+          const response = await fetch("/api/analyze", {
+            method: "POST",
+            body: fd,
+          });
+          const payload = await response.json();
+          if (!response.ok) {
+            throw new Error(payload.detail || "Inspection failed");
+          }
+          result.textContent = JSON.stringify(payload, null, 2);
+          if (payload.annotated_image) {
+            const img = document.createElement("img");
+            img.src = payload.annotated_image;
+            img.alt = "Annotated inspection output";
+            preview.appendChild(img);
+          }
+        } catch (error) {
+          result.textContent = error.message;
+        }
+      });
+    </script>
+  </body>
+</html>
