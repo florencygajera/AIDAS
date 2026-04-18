@@ -40,6 +40,7 @@ NMS_IOU = float(os.getenv("DEFECT_NMS_IOU", "0.45"))
 LOCATION_BONUS_CENTER = float(os.getenv("DEFECT_LOCATION_BONUS_CENTER", "1.15"))
 LOCATION_BONUS_EDGE = float(os.getenv("DEFECT_LOCATION_BONUS_EDGE", "0.90"))
 CRITICAL_ZONE_JSON = os.getenv("DEFECT_CRITICAL_ZONE_JSON", "")
+ENABLE_PATCH_SCAN = os.getenv("DEFECT_ENABLE_PATCH_SCAN", "0").strip().lower() in {"1", "true", "yes", "on"}
 
 def _first_existing_path(*candidates: str | Path) -> str:
     for candidate in candidates:

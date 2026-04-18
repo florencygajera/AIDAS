@@ -12,6 +12,7 @@ from app.config import (
     CRITICAL_CLASSES,
     FINAL_VALIDATION_CONFIDENCE,
     IMAGE_SIZE,
+    ENABLE_PATCH_SCAN,
     NMS_IOU,
     MERGE_CONFIDENCE,
     OUTPUT_DIR,
@@ -148,9 +149,13 @@ class DefectPipeline:
         self.calibrator = calibrator or ConfidenceCalibrator()
 
     def _detect_single_image(self, image_rgb: np.ndarray) -> Tuple[List[Detection], Dict[Tuple[str, Tuple[int, int, int, int]], int]]:
-        detections = run_multiscale_detection(self.detector, image_rgb)
+        detections = run_multiscale_detection(self.detector, image_rgb, include_patch_scan=False)
         if self.segmenter and self.segmenter.available:
             detections.extend(self.segmenter.predict(image_rgb, source="segment"))
+        if not detections and ENABLE_PATCH_SCAN:
+            detections = run_multiscale_detection(self.detector, image_rgb, include_patch_scan=True)
+            if self.segmenter and self.segmenter.available:
+                detections.extend(self.segmenter.predict(image_rgb, source="segment"))
         fused = weighted_box_fusion(detections, iou_threshold=NMS_IOU)
         fused = non_max_suppression(fused, iou_threshold=NMS_IOU)
         refined: List[Detection] = []

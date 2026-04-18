@@ -172,11 +172,17 @@ def run_patch_detection(detector: YoloDetector, image_rgb: np.ndarray) -> List[D
     return detections
 
 
-def run_multiscale_detection(detector: YoloDetector, image_rgb: np.ndarray) -> List[Detection]:
+def run_multiscale_detection(
+    detector: YoloDetector,
+    image_rgb: np.ndarray,
+    include_patch_scan: bool = False,
+) -> List[Detection]:
     full_scale = detector.predict(image_rgb, source="full_640")
     downscaled = cv2.resize(image_rgb, (320, 320), interpolation=cv2.INTER_AREA)
     down_scale_detections = detector.predict(downscaled, source="downscale_320")
-    merged = full_scale + down_scale_detections + run_patch_detection(detector, image_rgb)
+    merged = full_scale + down_scale_detections
+    if include_patch_scan:
+        merged += run_patch_detection(detector, image_rgb)
     return merged
 
 
