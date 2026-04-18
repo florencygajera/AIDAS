@@ -41,8 +41,32 @@ LOCATION_BONUS_CENTER = float(os.getenv("DEFECT_LOCATION_BONUS_CENTER", "1.15"))
 LOCATION_BONUS_EDGE = float(os.getenv("DEFECT_LOCATION_BONUS_EDGE", "0.90"))
 CRITICAL_ZONE_JSON = os.getenv("DEFECT_CRITICAL_ZONE_JSON", "")
 
-YOLO_PRIMARY_WEIGHTS = os.getenv(
-    "DEFECT_YOLO_WEIGHTS", str(MODEL_DIR / "yolov8m_defects.pt")
+def _first_existing_path(*candidates: str | Path) -> str:
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        if isinstance(candidate, str) and not candidate.strip():
+            continue
+        path = Path(candidate)
+        if path.is_file():
+            return str(path)
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        if isinstance(candidate, str) and not candidate.strip():
+            continue
+        return str(Path(candidate))
+    raise RuntimeError("No YOLO weight candidate was provided.")
+
+
+YOLO_PRIMARY_WEIGHTS = _first_existing_path(
+    os.getenv("DEFECT_YOLO_WEIGHTS", ""),
+    MODEL_DIR / "yolov8m_defects.pt",
+    BASE_DIR / "runs" / "detect" / "train" / "weights" / "best.pt",
+    BASE_DIR / "runs" / "detect" / "runs" / "detect" / "defect_train6" / "weights" / "best.pt",
+    BASE_DIR / "runs" / "detect" / "runs" / "detect" / "defect_train5" / "weights" / "best.pt",
+    BASE_DIR / "yolov8m.pt",
+    BASE_DIR / "yolov8n.pt",
 )
 YOLO_SEGMENT_WEIGHTS = os.getenv("DEFECT_YOLO_SEG_WEIGHTS", "")
 CLASSIFIER_WEIGHTS = os.getenv("DEFECT_CLASSIFIER_WEIGHTS", "")
