@@ -22,6 +22,24 @@ def load_yaml(path: Path) -> Dict[str, Any]:
 
 def build_train_kwargs(config: Dict[str, Any], args: argparse.Namespace) -> Dict[str, Any]:
     fast_mode = bool(args.fast or config.get("fast", False))
+    device = args.device
+    if device is None:
+        try:
+            import torch
+
+            device = "0" if torch.cuda.is_available() else "cpu"
+        except Exception:
+            device = "cpu"
+    elif device != "cpu":
+        try:
+            import torch
+
+            if not torch.cuda.is_available():
+                print(f"CUDA is unavailable; falling back from device={device!r} to cpu.")
+                device = "cpu"
+        except Exception:
+            print(f"Could not inspect CUDA; falling back from device={device!r} to cpu.")
+            device = "cpu"
     train_cfg = {
         "model": args.model or ("yolov8n.pt" if fast_mode else config.get("model", "yolov8m.pt")),
         "data": args.data or config.get("data", "configs/data.yaml"),
@@ -33,7 +51,6 @@ def build_train_kwargs(config: Dict[str, Any], args: argparse.Namespace) -> Dict
         "cos_lr": True if args.cos_lr else bool(config.get("cos_lr", True)),
         "mosaic": 0.5 if fast_mode else config.get("mosaic", 1.0),
         "mixup": 0.0 if fast_mode else config.get("mixup", 0.15),
-        "label_smoothing": config.get("label_smoothing", 0.0),
         "hsv_h": 0.01 if fast_mode else config.get("hsv_h", 0.015),
         "hsv_s": 0.5 if fast_mode else config.get("hsv_s", 0.7),
         "hsv_v": 0.3 if fast_mode else config.get("hsv_v", 0.4),
@@ -45,11 +62,10 @@ def build_train_kwargs(config: Dict[str, Any], args: argparse.Namespace) -> Dict
         "save": True,
         "project": args.project,
         "name": args.name,
+        "device": device,
     }
     if args.patience is not None:
         train_cfg["patience"] = args.patience
-    if args.device:
-        train_cfg["device"] = args.device
     if args.pretrained is not None:
         train_cfg["pretrained"] = args.pretrained
     return train_cfg
