@@ -21,6 +21,9 @@ def build_templates(template_dir: Path) -> Jinja2Templates:
 
 
 def validate_templates(templates: Jinja2Templates, sample_template: str = "index.html") -> None:
+    if not isinstance(sample_template, str):
+        raise TypeError(f"Template name must be str, got {type(sample_template).__name__}")
+
     env = templates.env
     if not isinstance(env.loader, FileSystemLoader):
         raise RuntimeError(f"Invalid Jinja loader: {type(env.loader).__name__}")
