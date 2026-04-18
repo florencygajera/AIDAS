@@ -7,9 +7,9 @@ from pathlib import Path
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 
 from app.config import OUTPUT_DIR, STATIC_DIR, TEMPLATE_DIR
+from app.jinja import build_templates, validate_templates
 from app.services.pipeline import DefectPipeline
 
 
@@ -19,16 +19,26 @@ app = FastAPI(
     version="1.0.0",
 )
 
-templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
+templates = build_templates(TEMPLATE_DIR)
+validate_templates(templates)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.mount("/outputs", StaticFiles(directory=str(OUTPUT_DIR)), name="outputs")
 
 pipeline = DefectPipeline()
 
 
+def render_template(request: Request, *, name: str, context: dict | None = None):
+    if not isinstance(name, str):
+        raise TypeError(f"Template name must be str, got {type(name).__name__}")
+    payload = {"request": request}
+    if context:
+        payload.update(context)
+    return templates.TemplateResponse(request, name, payload)
+
+
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return render_template(request, name="index.html")
 
 
 @app.get("/health")

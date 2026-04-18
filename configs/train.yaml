@@ -1,4 +1,4 @@
-fast: false
+fast: false                                                                                                                                 
 model: yolov8m.pt          # was yolov8n — too light for industrial defects
 data: dataset/data.yaml
 epochs: 100                # was 30 — insufficient for convergence
