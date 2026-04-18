@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
@@ -11,7 +10,6 @@ import numpy as np
 from app.config import (
     CLASS_NAMES,
     IMAGE_SIZE,
-    MERGE_CONFIDENCE,
     PATCH_SIZE,
     PATCH_STRIDE,
     PRIMARY_CONFIDENCE,
@@ -36,7 +34,11 @@ class Detection:
 
     @property
     def effective_confidence(self) -> float:
-        return float(self.refined_confidence if self.refined_confidence is not None else self.confidence)
+        return float(
+            self.refined_confidence
+            if self.refined_confidence is not None
+            else self.confidence
+        )
 
 
 def _iou(box_a: Tuple[int, int, int, int], box_b: Tuple[int, int, int, int]) -> float:
@@ -55,7 +57,9 @@ def _iou(box_a: Tuple[int, int, int, int], box_b: Tuple[int, int, int, int]) -> 
     return inter_area / denom if denom > 0 else 0.0
 
 
-def _clamp_box(box: Tuple[float, float, float, float], size: int = IMAGE_SIZE) -> Tuple[int, int, int, int]:
+def _clamp_box(
+    box: Tuple[float, float, float, float], size: int = IMAGE_SIZE
+) -> Tuple[int, int, int, int]:
     x1, y1, x2, y2 = box
     x1 = int(max(0, min(size - 1, round(x1))))
     y1 = int(max(0, min(size - 1, round(y1))))
@@ -68,12 +72,13 @@ def _clamp_box(box: Tuple[float, float, float, float], size: int = IMAGE_SIZE) -
     return x1, y1, x2, y2
 
 
-def _xyxy_from_xywh(center_x: float, center_y: float, width: float, height: float) -> Tuple[float, float, float, float]:
-    return center_x - width / 2.0, center_y - height / 2.0, center_x + width / 2.0, center_y + height / 2.0
-
-
 class YoloDetector:
-    def __init__(self, weights: str = YOLO_PRIMARY_WEIGHTS, conf: float = PRIMARY_CONFIDENCE, iou: float = 0.45):
+    def __init__(
+        self,
+        weights: str = YOLO_PRIMARY_WEIGHTS,
+        conf: float = PRIMARY_CONFIDENCE,
+        iou: float = 0.45,
+    ):
         self.weights = weights
         self.conf = conf
         self.iou = iou
@@ -89,16 +94,20 @@ class YoloDetector:
             )
         try:
             from ultralytics import YOLO
-        except Exception as exc:  # pragma: no cover - dependency guard
+        except Exception as exc:
             raise RuntimeError(
                 "ultralytics is required for detection inference. Install project dependencies first."
             ) from exc
         self._model = YOLO(str(weights_path))
         return self._model
 
-    def predict(self, image_rgb: np.ndarray, source: str = "primary") -> List[Detection]:
+    def predict(
+        self, image_rgb: np.ndarray, source: str = "primary"
+    ) -> List[Detection]:
         model = self._ensure_model()
-        results = model.predict(source=image_rgb, conf=self.conf, iou=self.iou, verbose=False)
+        results = model.predict(
+            source=image_rgb, conf=self.conf, iou=self.iou, verbose=False
+        )
         detections: List[Detection] = []
         if not results:
             return detections
@@ -109,7 +118,14 @@ class YoloDetector:
         names = result.names if hasattr(result, "names") else {}
         for box in boxes:
             cls_idx = int(box.cls.item())
-            label = str(names.get(cls_idx, CLASS_NAMES[cls_idx] if cls_idx < len(CLASS_NAMES) else f"class_{cls_idx}"))
+            label = str(
+                names.get(
+                    cls_idx,
+                    CLASS_NAMES[cls_idx]
+                    if cls_idx < len(CLASS_NAMES)
+                    else f"class_{cls_idx}",
+                )
+            )
             confidence = float(box.conf.item())
             x1, y1, x2, y2 = box.xyxy[0].tolist()
             detections.append(
@@ -143,22 +159,19 @@ class OptionalSegmenter(YoloDetector):
         return bool(self.weights) and Path(self.weights).exists()
 
 
-def denormalize_patch_box(
-    patch_bbox: Tuple[int, int, int, int],
-    patch_origin: Tuple[int, int],
-) -> Tuple[int, int, int, int]:
-    ox, oy = patch_origin
-    x1, y1, x2, y2 = patch_bbox
-    return x1 + ox, y1 + oy, x2 + ox, y2 + oy
-
-
-def sliding_windows(image_size: int = IMAGE_SIZE, patch_size: int = PATCH_SIZE, stride: int = PATCH_STRIDE):
+def sliding_windows(
+    image_size: int = IMAGE_SIZE,
+    patch_size: int = PATCH_SIZE,
+    stride: int = PATCH_STRIDE,
+):
     for y in range(0, max(image_size - patch_size + 1, 1), stride):
         for x in range(0, max(image_size - patch_size + 1, 1), stride):
             yield x, y, min(x + patch_size, image_size), min(y + patch_size, image_size)
 
 
-def run_patch_detection(detector: YoloDetector, image_rgb: np.ndarray) -> List[Detection]:
+def run_patch_detection(
+    detector: YoloDetector, image_rgb: np.ndarray
+) -> List[Detection]:
     detections: List[Detection] = []
     for x1, y1, x2, y2 in sliding_windows():
         patch = image_rgb[y1:y2, x1:x2]
@@ -177,16 +190,33 @@ def run_multiscale_detection(
     image_rgb: np.ndarray,
     include_patch_scan: bool = False,
 ) -> List[Detection]:
+    h, w = image_rgb.shape[:2]
     full_scale = detector.predict(image_rgb, source="full_640")
+
+    # BUG FIX: YOLO returns boxes in the coordinate space of its input image.
+    # A 320x320 input produces boxes in [0, 320] space. We must scale them
+    # back to the original (640x640) space before merging with full_scale boxes,
+    # otherwise the two sets of coordinates are mismatched and IoU / NMS break.
     downscaled = cv2.resize(image_rgb, (320, 320), interpolation=cv2.INTER_AREA)
     down_scale_detections = detector.predict(downscaled, source="downscale_320")
+    scale_x = w / 320.0
+    scale_y = h / 320.0
+    for det in down_scale_detections:
+        x1, y1, x2, y2 = det.bbox
+        det.bbox = _clamp_box(
+            (x1 * scale_x, y1 * scale_y, x2 * scale_x, y2 * scale_y),
+            size=IMAGE_SIZE,
+        )
+
     merged = full_scale + down_scale_detections
     if include_patch_scan:
         merged += run_patch_detection(detector, image_rgb)
     return merged
 
 
-def weighted_box_fusion(detections: Sequence[Detection], iou_threshold: float = 0.5) -> List[Detection]:
+def weighted_box_fusion(
+    detections: Sequence[Detection], iou_threshold: float = 0.5
+) -> List[Detection]:
     grouped: Dict[str, List[Detection]] = {}
     for det in detections:
         grouped.setdefault(det.label, []).append(det)
@@ -208,12 +238,20 @@ def weighted_box_fusion(detections: Sequence[Detection], iou_threshold: float = 
             if len(cluster) == 1:
                 fused.append(item)
                 continue
-            weights = np.array([max(det.effective_confidence, 1e-3) for det in cluster], dtype=np.float32)
+            weights = np.array(
+                [max(det.effective_confidence, 1e-3) for det in cluster],
+                dtype=np.float32,
+            )
             coords = np.array([det.bbox for det in cluster], dtype=np.float32)
             averaged = np.sum(coords * weights[:, None], axis=0) / np.sum(weights)
             confidence = float(max(det.effective_confidence for det in cluster))
             source_count = sum(det.source_count for det in cluster)
-            source_tags = tuple(sorted({tag for det in cluster for tag in det.source_tags} | {det.source for det in cluster}))
+            source_tags = tuple(
+                sorted(
+                    {tag for det in cluster for tag in det.source_tags}
+                    | {det.source for det in cluster}
+                )
+            )
             fused.append(
                 Detection(
                     label=label,
@@ -228,13 +266,18 @@ def weighted_box_fusion(detections: Sequence[Detection], iou_threshold: float = 
     return sorted(fused, key=lambda d: d.effective_confidence, reverse=True)
 
 
-def non_max_suppression(detections: Sequence[Detection], iou_threshold: float = 0.45) -> List[Detection]:
+def non_max_suppression(
+    detections: Sequence[Detection], iou_threshold: float = 0.45
+) -> List[Detection]:
     ordered = sorted(detections, key=lambda d: d.effective_confidence, reverse=True)
     kept: List[Detection] = []
     for det in ordered:
         keep = True
         for existing in kept:
-            if det.label == existing.label and _iou(det.bbox, existing.bbox) >= iou_threshold:
+            if (
+                det.label == existing.label
+                and _iou(det.bbox, existing.bbox) >= iou_threshold
+            ):
                 keep = False
                 break
         if keep:

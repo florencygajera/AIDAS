@@ -1,8 +1,9 @@
-version: "3.9"
-
 services:
   defect-api:
-    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/defect-detection:latest
+    # BUG FIX: GITHUB_REPOSITORY_OWNER is a GitHub Actions variable, NOT available on VPS.
+    # Create a .env file next to this compose file with:
+    #   GHCR_IMAGE=ghcr.io/florencygajera/defect-detection
+    image: ${GHCR_IMAGE}:latest
     # For local dev, build from source instead:
     # build: .
     container_name: defect-detection

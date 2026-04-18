@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Generator, Iterable, Optional, Tuple
+from typing import Generator, Tuple
 
 import cv2
 import numpy as np
@@ -28,7 +27,9 @@ class PreprocessedImage:
 
 
 def is_supported_media(path: Path) -> bool:
-    return path.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS | SUPPORTED_VIDEO_EXTENSIONS
+    return (
+        path.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS | SUPPORTED_VIDEO_EXTENSIONS
+    )
 
 
 def is_video(path: Path) -> bool:
@@ -52,7 +53,9 @@ def letterbox(image: np.ndarray, size: int = IMAGE_SIZE) -> PreprocessedImage:
     pad_x = (size - new_w) // 2
     pad_y = (size - new_h) // 2
     canvas[pad_y : pad_y + new_h, pad_x : pad_x + new_w] = resized
-    return PreprocessedImage(image=canvas, original=original, scale=scale, pad_x=pad_x, pad_y=pad_y)
+    return PreprocessedImage(
+        image=canvas, original=original, scale=scale, pad_x=pad_x, pad_y=pad_y
+    )
 
 
 def blur_score(image_rgb: np.ndarray) -> float:
@@ -68,16 +71,21 @@ def brightness_score(image_rgb: np.ndarray) -> float:
 def is_low_quality(image_rgb: np.ndarray) -> bool:
     blur = blur_score(image_rgb)
     brightness = brightness_score(image_rgb)
-    return blur < BLUR_THRESHOLD or brightness < BRIGHTNESS_MIN or brightness > BRIGHTNESS_MAX
+    return (
+        blur < BLUR_THRESHOLD
+        or brightness < BRIGHTNESS_MIN
+        or brightness > BRIGHTNESS_MAX
+    )
 
 
 def enhance_image(image_rgb: np.ndarray) -> np.ndarray:
     bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
     denoised = cv2.fastNlMeansDenoisingColored(bgr, None, 4, 4, 7, 21)
     lab = cv2.cvtColor(denoised, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
+    # BUG FIX E741: renamed ambiguous single-letter 'l' to 'l_channel'
+    l_channel, a, b = cv2.split(lab)
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    cl = clahe.apply(l)
+    cl = clahe.apply(l_channel)
     merged = cv2.merge((cl, a, b))
     enhanced_bgr = cv2.cvtColor(merged, cv2.COLOR_LAB2BGR)
     return cv2.cvtColor(enhanced_bgr, cv2.COLOR_BGR2RGB)
@@ -88,7 +96,9 @@ def preprocess_image(image_rgb: np.ndarray) -> PreprocessedImage:
     return letterbox(enhanced, IMAGE_SIZE)
 
 
-def video_frame_indices(total_frames: int, fps: float, interval_seconds: float) -> Generator[int, None, None]:
+def video_frame_indices(
+    total_frames: int, fps: float, interval_seconds: float
+) -> Generator[int, None, None]:
     if total_frames <= 0 or fps <= 0:
         return
     step = max(int(round(fps * interval_seconds)), 1)
@@ -96,7 +106,9 @@ def video_frame_indices(total_frames: int, fps: float, interval_seconds: float) 
         yield idx
 
 
-def load_video_frames(path: Path, interval_seconds: float) -> Generator[Tuple[int, np.ndarray, float], None, None]:
+def load_video_frames(
+    path: Path, interval_seconds: float
+) -> Generator[Tuple[int, np.ndarray, float], None, None]:
     capture = cv2.VideoCapture(str(path))
     if not capture.isOpened():
         raise ValueError(f"Unable to open video: {path}")

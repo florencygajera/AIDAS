@@ -1,20 +1,17 @@
 from __future__ import annotations
 
-import json
-from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
 
 from app.config import (
     CRITICAL_CLASSES,
+    ENABLE_PATCH_SCAN,
     FINAL_VALIDATION_CONFIDENCE,
     IMAGE_SIZE,
-    ENABLE_PATCH_SCAN,
     NMS_IOU,
-    MERGE_CONFIDENCE,
     OUTPUT_DIR,
     SECONDARY_CONFIRMATION_CONFIDENCE,
     TEMPORAL_MIN_CONSEC_FRAMES,
@@ -31,7 +28,6 @@ from app.services.detection import (
     non_max_suppression,
     remap_to_original,
     run_multiscale_detection,
-    run_patch_detection,
     weighted_box_fusion,
 )
 from app.services.preprocess import (
@@ -43,9 +39,13 @@ from app.services.preprocess import (
     read_image_rgb,
     save_rgb_image,
 )
+from app.services.scoring import (
+    audit_decision,
+    risk_score_for_detections,
+    severity_from_label,
+)
 from app.services.temporal import TemporalConsistencyTracker
 from app.services.validation import validate_detection
-from app.services.scoring import audit_decision, risk_score_for_detections, severity_from_label
 
 
 def _detection_to_box(det: Detection) -> DefectBox:
@@ -59,64 +59,6 @@ def _detection_to_box(det: Detection) -> DefectBox:
 
 def _output_url(path: Path) -> str:
     return f"/outputs/{path.name}"
-
-
-def _draw_annotations(image_rgb: np.ndarray, detections: Sequence[Detection]) -> np.ndarray:
-    annotated = image_rgb.copy()
-    colors = {
-        "HIGH": (220, 38, 38),
-        "MEDIUM": (245, 158, 11),
-        "LOW": (34, 197, 94),
-    }
-    for det in detections:
-        x1, y1, x2, y2 = det.bbox
-        severity = severity_from_label(det.label)
-        color = colors[severity]
-        cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
-        label = f"{det.label} {det.effective_confidence:.2f}"
-        if det.mask_area is not None:
-            label += f" area:{det.mask_area:.0f}"
-        text_size, baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-        top = max(y1 - text_size[1] - 8, 0)
-        cv2.rectangle(annotated, (x1, top), (x1 + text_size[0] + 6, top + text_size[1] + baseline + 6), color, -1)
-        cv2.putText(
-            annotated,
-            label,
-            (x1 + 3, top + text_size[1] + 2),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (255, 255, 255),
-            1,
-            cv2.LINE_AA,
-        )
-    return annotated
-
-
-def _merge_video_detections(detections: Sequence[Detection]) -> Tuple[List[Detection], Dict[Tuple[str, Tuple[int, int, int, int]], int]]:
-    if not detections:
-        return [], {}
-    groups: List[List[Detection]] = []
-    for det in detections:
-        placed = False
-        for group in groups:
-            if group[0].label != det.label:
-                continue
-            if any(_iou(group_item.bbox, det.bbox) >= 0.4 for group_item in group):
-                group.append(det)
-                placed = True
-                break
-        if not placed:
-            groups.append([det])
-    merged: List[Detection] = []
-    consistency_counts: Dict[Tuple[str, Tuple[int, int, int, int]], int] = {}
-    for group in groups:
-        fused = weighted_box_fusion(group, iou_threshold=0.4)
-        for det in fused:
-            count = len(group)
-            det.source_count = count
-            consistency_counts[(det.label, det.bbox)] = count
-            merged.append(det)
-    return merged, consistency_counts
 
 
 def _iou(box_a: Tuple[int, int, int, int], box_b: Tuple[int, int, int, int]) -> float:
@@ -135,6 +77,45 @@ def _iou(box_a: Tuple[int, int, int, int], box_b: Tuple[int, int, int, int]) -> 
     return inter_area / denom if denom > 0 else 0.0
 
 
+def _draw_annotations(
+    image_rgb: np.ndarray, detections: Sequence[Detection]
+) -> np.ndarray:
+    annotated = image_rgb.copy()
+    colors = {
+        "HIGH": (220, 38, 38),
+        "MEDIUM": (245, 158, 11),
+        "LOW": (34, 197, 94),
+    }
+    for det in detections:
+        x1, y1, x2, y2 = det.bbox
+        severity = severity_from_label(det.label)
+        color = colors[severity]
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+        label = f"{det.label} {det.effective_confidence:.2f}"
+        if det.mask_area is not None:
+            label += f" area:{det.mask_area:.0f}"
+        text_size, baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        top = max(y1 - text_size[1] - 8, 0)
+        cv2.rectangle(
+            annotated,
+            (x1, top),
+            (x1 + text_size[0] + 6, top + text_size[1] + baseline + 6),
+            color,
+            -1,
+        )
+        cv2.putText(
+            annotated,
+            label,
+            (x1 + 3, top + text_size[1] + 2),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (255, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
+    return annotated
+
+
 class DefectPipeline:
     def __init__(
         self,
@@ -148,12 +129,19 @@ class DefectPipeline:
         self.refiner = refiner or DefectRefiner()
         self.calibrator = calibrator or ConfidenceCalibrator()
 
-    def _detect_single_image(self, image_rgb: np.ndarray) -> Tuple[List[Detection], Dict[Tuple[str, Tuple[int, int, int, int]], int]]:
-        detections = run_multiscale_detection(self.detector, image_rgb, include_patch_scan=False)
+    def _detect_single_image(
+        self,
+        image_rgb: np.ndarray,
+    ) -> Tuple[List[Detection], Dict[Tuple[str, Tuple[int, int, int, int]], int]]:
+        detections = run_multiscale_detection(
+            self.detector, image_rgb, include_patch_scan=False
+        )
         if self.segmenter and self.segmenter.available:
             detections.extend(self.segmenter.predict(image_rgb, source="segment"))
         if not detections and ENABLE_PATCH_SCAN:
-            detections = run_multiscale_detection(self.detector, image_rgb, include_patch_scan=True)
+            detections = run_multiscale_detection(
+                self.detector, image_rgb, include_patch_scan=True
+            )
             if self.segmenter and self.segmenter.available:
                 detections.extend(self.segmenter.predict(image_rgb, source="segment"))
         fused = weighted_box_fusion(detections, iou_threshold=NMS_IOU)
@@ -161,21 +149,32 @@ class DefectPipeline:
         refined: List[Detection] = []
         image_size = (image_rgb.shape[1], image_rgb.shape[0])
         for det in fused:
-            det.refined_confidence = self.calibrator.calibrate_probability(det.confidence)
+            det.refined_confidence = self.calibrator.calibrate_probability(
+                det.confidence
+            )
             det = self.refiner.refine_detection(image_rgb, det)
             validation = validate_detection(det, image_size, CRITICAL_CLASSES)
             if not validation.accepted and det.label not in CRITICAL_CLASSES:
                 continue
             det.source_count = max(det.source_count, len(set(det.source_tags)))
             if det.label in CRITICAL_CLASSES:
-                if det.source_count >= 2 or det.effective_confidence >= SECONDARY_CONFIRMATION_CONFIDENCE:
+                if (
+                    det.source_count >= 2
+                    or det.effective_confidence >= SECONDARY_CONFIRMATION_CONFIDENCE
+                ):
                     refined.append(det)
-                elif validation.accepted and det.effective_confidence >= FINAL_VALIDATION_CONFIDENCE:
+                elif (
+                    validation.accepted
+                    and det.effective_confidence >= FINAL_VALIDATION_CONFIDENCE
+                ):
                     refined.append(det)
             elif det.effective_confidence >= FINAL_VALIDATION_CONFIDENCE:
                 refined.append(det)
         refined = non_max_suppression(refined, iou_threshold=NMS_IOU)
-        consistency = {(det.label, det.bbox): max(det.source_count, len(set(det.source_tags))) for det in refined}
+        consistency = {
+            (det.label, det.bbox): max(det.source_count, len(set(det.source_tags)))
+            for det in refined
+        }
         return refined, consistency
 
     def process_image(self, input_path: Path) -> AuditResponse:
@@ -185,7 +184,9 @@ class DefectPipeline:
         remapped: List[Detection] = []
         for det in detections:
             remapped.append(remap_to_original(preprocessed, det))
-        risk = risk_score_for_detections(remapped, (image_rgb.shape[1], image_rgb.shape[0]), consistency)
+        risk = risk_score_for_detections(
+            remapped, (image_rgb.shape[1], image_rgb.shape[0]), consistency
+        )
         status = audit_decision(remapped, risk)
         annotated = _draw_annotations(image_rgb, remapped)
         out_path = OUTPUT_DIR / f"{input_path.stem}_annotated.jpg"
@@ -209,7 +210,9 @@ class DefectPipeline:
         sampled_index = 0
         first_frame_rgb: Optional[np.ndarray] = None
         tracker = TemporalConsistencyTracker()
-        for frame_idx, frame_rgb, timestamp in load_video_frames(input_path, VIDEO_SAMPLE_INTERVAL_SECONDS):
+        for frame_idx, frame_rgb, timestamp in load_video_frames(
+            input_path, VIDEO_SAMPLE_INTERVAL_SECONDS
+        ):
             frame_count += 1
             if first_frame_rgb is None:
                 first_frame_rgb = frame_rgb
@@ -227,7 +230,11 @@ class DefectPipeline:
             tracker.update(remapped, sampled_index)
             sampled_index += 1
         if not detections_all:
-            fallback = first_frame_rgb if first_frame_rgb is not None else np.zeros((IMAGE_SIZE, IMAGE_SIZE, 3), dtype=np.uint8)
+            fallback = (
+                first_frame_rgb
+                if first_frame_rgb is not None
+                else np.zeros((IMAGE_SIZE, IMAGE_SIZE, 3), dtype=np.uint8)
+            )
             out_path = OUTPUT_DIR / f"{input_path.stem}_annotated.jpg"
             save_rgb_image(fallback, out_path)
             return AuditResponse(
@@ -240,7 +247,9 @@ class DefectPipeline:
                 frame_count=frame_count,
                 skipped_frames=skipped_frames,
             )
-        confirmed = tracker.confirmed_detections(min_consecutive_frames=TEMPORAL_MIN_CONSEC_FRAMES)
+        confirmed = tracker.confirmed_detections(
+            min_consecutive_frames=TEMPORAL_MIN_CONSEC_FRAMES
+        )
         if not confirmed:
             confirmed = []
             for track in tracker.tracks:
@@ -248,17 +257,26 @@ class DefectPipeline:
                     det = track.best_detection
                     det.source_count = track.total_hits
                     confirmed.append(det)
-        confirmed = non_max_suppression(weighted_box_fusion(confirmed, iou_threshold=NMS_IOU), iou_threshold=NMS_IOU)
-        refined = [self.refiner.refine_detection(first_frame_rgb if first_frame_rgb is not None else frame_summaries[0][1], det) for det in confirmed]
-        consistency_counts = {(det.label, det.bbox): max(det.source_count, len(set(det.source_tags))) for det in refined}
-        risk = risk_score_for_detections(
-            refined,
-            (frame_summaries[0][1].shape[1], frame_summaries[0][1].shape[0]) if frame_summaries else (IMAGE_SIZE, IMAGE_SIZE),
-            consistency_counts,
+        confirmed = non_max_suppression(
+            weighted_box_fusion(confirmed, iou_threshold=NMS_IOU),
+            iou_threshold=NMS_IOU,
         )
+        ref_frame = (
+            first_frame_rgb if first_frame_rgb is not None else frame_summaries[0][1]
+        )
+        refined = [self.refiner.refine_detection(ref_frame, det) for det in confirmed]
+        consistency_counts = {
+            (det.label, det.bbox): max(det.source_count, len(set(det.source_tags)))
+            for det in refined
+        }
+        img_size = (
+            (frame_summaries[0][1].shape[1], frame_summaries[0][1].shape[0])
+            if frame_summaries
+            else (IMAGE_SIZE, IMAGE_SIZE)
+        )
+        risk = risk_score_for_detections(refined, img_size, consistency_counts)
         status = audit_decision(refined, risk)
-        annotated_source = first_frame_rgb if first_frame_rgb is not None else frame_summaries[0][1]
-        annotated = _draw_annotations(annotated_source, refined)
+        annotated = _draw_annotations(ref_frame, refined)
         out_path = OUTPUT_DIR / f"{input_path.stem}_annotated.jpg"
         save_rgb_image(annotated, out_path)
         return AuditResponse(
@@ -274,7 +292,9 @@ class DefectPipeline:
 
     def process(self, input_path: Path) -> AuditResponse:
         if not is_supported_media(input_path):
-            raise ValueError("Unsupported file type. Use JPG, PNG, JPEG, BMP, MP4, AVI, or MOV.")
+            raise ValueError(
+                "Unsupported file type. Use JPG, PNG, JPEG, BMP, MP4, AVI, or MOV."
+            )
         if is_video(input_path):
             return self.process_video(input_path)
         return self.process_image(input_path)
