@@ -1,0 +1,56 @@
+version: "3.9"
+
+services:
+  defect-api:
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/defect-detection:latest
+    # For local dev, build from source instead:
+    # build: .
+    container_name: defect-detection
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      # Model weights live on the host; never baked into the image
+      - ./models:/app/models:ro
+      # Annotated outputs written here
+      - ./outputs:/app/outputs
+    environment:
+      # ── Model paths ──────────────────────────────────────────────
+      DEFECT_YOLO_WEIGHTS: /app/models/yolov8m_defects.pt
+      # DEFECT_YOLO_SEG_WEIGHTS: /app/models/yolov8m_seg.pt
+      # DEFECT_CLASSIFIER_WEIGHTS: /app/models/classifier.pt
+
+      # ── Inference tuning ─────────────────────────────────────────
+      DEFECT_IMAGE_SIZE: "640"
+      DEFECT_PRIMARY_CONF: "0.25"
+      DEFECT_FINAL_VALIDATION_CONF: "0.45"
+      DEFECT_ENABLE_PATCH_SCAN: "0"
+
+      # ── Video ────────────────────────────────────────────────────
+      DEFECT_VIDEO_INTERVAL: "0.75"
+    # Uncomment for GPU (requires nvidia-container-toolkit on host)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # Optional: nginx reverse proxy with SSL termination
+  # nginx:
+  #   image: nginx:alpine
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./nginx.conf:/etc/nginx/nginx.conf:ro
+  #     - /etc/letsencrypt:/etc/letsencrypt:ro
+  #   depends_on:
+  #     - defect-api

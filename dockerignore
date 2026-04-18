@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Environments
+.venv/
+venv/
+env/
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Large artifacts – mount these as volumes at runtime
+models/
+data/
+dataset/
+datasets/
+outputs/
+logs/
+runs/
+
+# Trained weights (too large for image layer)
+*.pt
+*.pth
+*.onnx
+*.engine
+
+# Git
+.git/
+.gitignore
+
+# CI / docs
+.github/
+*.md
+
+# Scripts are dev-only; not needed in the container
+scripts/
+train.py
